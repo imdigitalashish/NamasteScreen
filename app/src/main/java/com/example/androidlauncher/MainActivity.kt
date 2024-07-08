@@ -1,14 +1,19 @@
 package com.example.androidlauncher
 
+import AppListManager
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.provider.CalendarContract.Colors
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -76,37 +81,33 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.lifecycleScope
+import com.example.androidlauncher.utils.hasUsageStatsPermission
+import com.example.androidlauncher.utils.requestUsageStatsPermission
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
-
-fun requestUsageStatsPermission(context: Context) {
-    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
-}
-
-fun hasUsageStatsPermission(context: Context): Boolean {
-    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            android.os.Process.myUid(),
-            context.packageName
-        )
-    } else {
-        appOps.checkOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            android.os.Process.myUid(),
-            context.packageName
-        )
-    }
-    return mode == AppOpsManager.MODE_ALLOWED
-}
-
 class MainActivity : ComponentActivity() {
+
+    private lateinit var appListManager: AppListManager;
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        appListManager = AppListManager(this);
+
+        lifecycleScope.launch {
+            appListManager.loadApps()
+        }
+
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+
+        registerReceiver(packageChangeReceiver, filter)
 
         if (!hasUsageStatsPermission(this)) {
             requestUsageStatsPermission(this)
@@ -121,13 +122,29 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column {
                         Spacer(modifier = Modifier.height(30.dp))
-                        HomeScreenLauncher(context = this@MainActivity)
+                        HomeScreenLauncher(context = this@MainActivity, appListManager = appListManager)
                     }
 
                 }
             }
         }
+
     }
+
+
+    private val packageChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            lifecycleScope.launch {
+                appListManager.refreshAppList()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(packageChangeReceiver)
+    }
+
 }
 
 data class AppInfo(
@@ -232,7 +249,8 @@ fun loadTasks(context: Context): List<String> {
 }
 
 @Composable
-fun HomeScreenLauncher(context: Context) {
+fun HomeScreenLauncher(context: Context, appListManager: AppListManager) {
+
     var currentScreen by remember { mutableStateOf(0) }
     var isAppListVisible by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -444,7 +462,7 @@ fun HomeScreenLauncher(context: Context) {
                         )
                     }
             ) {
-                AppListWithSearch(context)
+                AppListWithSearch(context, appListManager = appListManager)
             }
         }
 
@@ -467,26 +485,30 @@ fun HomeScreenLauncher(context: Context) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppListWithSearch(context: Context) {
+fun AppListWithSearch(context: Context, appListManager: AppListManager) {
+
+    val apps by appListManager.apps
+    var searchQuery by remember { mutableStateOf("") }
+
 
     val configuration = LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
 
-    var searchQuery by remember { mutableStateOf("") }
-    val apps = remember {
-        val intent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-        val packageManager = context.packageManager
-        val allApps = packageManager.queryIntentActivities(intent, 0)
-        allApps.map { ri ->
-            AppInfo(
-                label = ri.loadLabel(packageManager).toString(),
-                packageName = ri.activityInfo.packageName,
-                icon = ri.activityInfo.loadIcon(packageManager)
-            )
-        }.sortedBy { it.label.lowercase() }
-    }
+//    var searchQuery by remember { mutableStateOf("") }
+//    val apps = remember {
+//        val intent = Intent(Intent.ACTION_MAIN, null).apply {
+//            addCategory(Intent.CATEGORY_LAUNCHER)
+//        }
+//        val packageManager = context.packageManager
+//        val allApps = packageManager.queryIntentActivities(intent, 0)
+//        allApps.map { ri ->
+//            AppInfo(
+//                label = ri.loadLabel(packageManager).toString(),
+//                packageName = ri.activityInfo.packageName,
+//                icon = ri.activityInfo.loadIcon(packageManager)
+//            )
+//        }.sortedBy { it.label.lowercase() }
+//    }
 
     Column(
         modifier = Modifier
@@ -545,9 +567,20 @@ fun AppListWithSearch(context: Context) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                val launchIntent = Intent(Intent.ACTION_MAIN)
-                                launchIntent.setPackage(app.packageName)
-                                context.startActivity(launchIntent)
+                                val packageManager: PackageManager = context.packageManager
+                                try {
+                                    val launchIntent = packageManager.getLaunchIntentForPackage(app.packageName)
+                                    if (launchIntent != null) {
+                                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        context.startActivity(launchIntent)
+                                    } else {
+                                        // Handle the case where the app doesn't have a launch intent
+                                        Toast.makeText(context, "Unable to launch the app", Toast.LENGTH_SHORT).show()
+                                    }
+                                } catch (e: Exception) {
+                                    // Handle any exceptions (e.g., app not installed)
+                                    Toast.makeText(context, "Error launching the app: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
                             }
                             .padding(16.dp, 4.dp),
                         verticalAlignment = Alignment.CenterVertically
