@@ -1,6 +1,7 @@
 package com.example.androidlauncher
 
 import AppListManager
+import android.app.AlertDialog
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
@@ -82,8 +83,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.lifecycleScope
+import com.example.androidlauncher.utils.hasPromptedForDefaultLauncher
 import com.example.androidlauncher.utils.hasUsageStatsPermission
+import com.example.androidlauncher.utils.isDefaultLauncher
 import com.example.androidlauncher.utils.requestUsageStatsPermission
+import com.example.androidlauncher.utils.setPromptedForDefaultLauncher
+import com.example.androidlauncher.utils.showDefaultLauncherDialog
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -112,6 +117,20 @@ class MainActivity : ComponentActivity() {
         if (!hasUsageStatsPermission(this)) {
             requestUsageStatsPermission(this)
         }
+        if (!isDefaultLauncher(this) && !hasPromptedForDefaultLauncher(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Set as Default Launcher")
+                .setMessage("Select NamasteScreen to boost your productivity by 5x !")
+                .setPositiveButton("Yes") { _, _ ->
+                    showDefaultLauncherDialog(this)
+                    setPromptedForDefaultLauncher(this)
+                }
+                .setNegativeButton("No") { _, _ ->
+                    setPromptedForDefaultLauncher(this)
+                }
+                .show()
+        }
+
 
         setContent {
             AndroidLauncherTheme {
