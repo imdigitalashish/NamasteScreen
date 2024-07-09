@@ -1,7 +1,9 @@
 ## NamasteScreen - Swadeshi India Android Launcher !
 
 
-Download the APK here - https://github.com/imdigitalashish/NamasteScreen/blob/master/release/app-debug.apk
+Download the APK here - https://play.google.com/store/apps/details?id=com.imdigitalashish.namastescreen&hl=en_IN&gl=US
+
+Your contribution to this repository goes straight to above url...
 
 
 🚀 Introducing NamasteScreen: The Launcher That Fights Phone Addiction! 🇮🇳
